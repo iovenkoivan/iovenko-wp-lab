@@ -1,0 +1,55 @@
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+permissions:
+  pull-requests: write
+  issues: write
+
+jobs:
+  security-audit:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Потрібно для Gitleaks, щоб перевірити історію комітів
+
+      # 1. Пошук секретів (Gitleaks)
+      - name: Check for secrets (Gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Крок завершиться з помилкою, якщо в коді знайдені API-ключі або паролі
+
+      # 3. Збірка образу
+      - name: Build Docker image
+        run: |
+          docker build -t juice-shop:${{ github.sha }} .
+
+      # 4. Сканування на CVE + Генерація звіту для Wazuh
+      - name: Scan image (Trivy)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'juice-shop:${{ github.sha }}'
+          format: 'json'
+          output: 'trivy-report.json' # Зберігаємо у JSON для інтеграції
+          severity: 'CRITICAL,HIGH'
+
+      # 5. Аналіз структури образу (Dockle)
+      - name: Run Dockle
+        uses: goodwithtech/dockle-action@main
+        with:
+          image: 'juice-shop:${{ github.sha }}'
+          format: list
+
+      # 6. Збереження звіту як артефакту (для вашої лаби)
+      - name: Upload Security Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: trivy-report.json
